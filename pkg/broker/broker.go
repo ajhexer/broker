@@ -7,7 +7,7 @@ import (
 )
 
 type Message struct {
-	id         int
+	Id         int
 	Body       string
 	Expiration time.Duration
 }
