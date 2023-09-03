@@ -1,6 +1,7 @@
 package app
 
 import (
+	"broker/internal/raft/repository"
 	"broker/pkg/broker"
 	"context"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,8 @@ var (
 
 func TestMain(m *testing.M) {
 	rand.Seed(time.Now().Unix())
-	service = NewModule()
+	service = NewModule(true, "localhost:12000", ".", "localhost:12000", repository.NewMock(make(map[string]map[int]broker.Message)))
+	<-time.After(2 * time.Second)
 	m.Run()
 }
 
@@ -121,6 +123,7 @@ func TestPublishShouldNotSendToOtherSubscriptions(t *testing.T) {
 func TestNonExpiredMessageShouldBeFetchable(t *testing.T) {
 	msg := createMessageWithExpire(time.Second * 10)
 	id, _ := service.Publish(mainCtx, "ali", msg)
+	<-time.After(30 * time.Millisecond)
 	fMsg, _ := service.Fetch(mainCtx, "ali", id)
 
 	assert.Equal(t, msg, fMsg)
@@ -247,6 +250,7 @@ func TestConcurrentPublishShouldNotFail(t *testing.T) {
 }
 
 func TestDataRace(t *testing.T) {
+
 	duration := 500 * time.Millisecond
 	ticker := time.NewTicker(duration)
 	defer ticker.Stop()
