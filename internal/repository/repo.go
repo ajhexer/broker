@@ -7,7 +7,7 @@ import (
 )
 
 type SecondaryDB interface {
-	Save(msg broker.Message, subject string)
+	Save(msg broker.Message, subject string) error
 	FetchMessage(id int, subject string) (broker.Message, error)
 	DeleteMessage(id int, subject string) error
 	DropAll() error
@@ -24,7 +24,7 @@ func NewMock(messages map[string]map[int]broker.Message) *MockDB {
 	}
 }
 
-func (m *MockDB) Save(msg broker.Message, subject string) {
+func (m *MockDB) Save(msg broker.Message, subject string) error {
 	m.lock.Lock()
 	if _, ok := m.messages[subject]; !ok {
 		m.messages[subject] = make(map[int]broker.Message)
@@ -32,6 +32,7 @@ func (m *MockDB) Save(msg broker.Message, subject string) {
 
 	m.messages[subject][msg.Id] = msg
 	m.lock.Unlock()
+	return nil
 }
 
 func (m *MockDB) FetchMessage(id int, subject string) (broker.Message, error) {
