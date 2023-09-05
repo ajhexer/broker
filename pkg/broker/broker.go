@@ -20,6 +20,4 @@ type Broker interface {
 	Subscribe(ctx context.Context, subject string) (<-chan Message, error)
 
 	Fetch(ctx context.Context, subject string, id int) (Message, error)
-	Join(nodeID, raftAddr string) error
-	Leave(nodeID string) error
 }

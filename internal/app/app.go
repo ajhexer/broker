@@ -1,6 +1,7 @@
 package app
 
 import (
+	"broker/internal/discovery"
 	"broker/internal/model"
 	"broker/internal/raft/fsm"
 	"broker/internal/repository"
@@ -17,13 +18,14 @@ import (
 	"time"
 )
 
-type BrokerImpl struct {
+type BrokerNode struct {
 	Raft         *raft.Raft
 	FSM          *fsm.BrokerFSM
 	subjects     map[string]model.Subject
 	IsShutdown   bool
 	listenerLock sync.RWMutex
 	brokerLock   sync.Mutex
+	membership   *discovery.Membership
 }
 
 func NewModule(enableSingle bool, localID string, badgerPath string, BindAddr string, repo repository.SecondaryDB) broker.Broker {
@@ -31,8 +33,7 @@ func NewModule(enableSingle bool, localID string, badgerPath string, BindAddr st
 	if err != nil {
 		panic(err)
 	}
-
-	return &BrokerImpl{
+	return &BrokerNode{
 		Raft:         raftInstance,
 		FSM:          fsmInstance,
 		subjects:     make(map[string]model.Subject),
@@ -106,7 +107,7 @@ func Open(enableSingle bool, localID string, badgerPath string, BindAddr string,
 	return r, f, nil
 }
 
-func (b *BrokerImpl) Close() error {
+func (b *BrokerNode) Close() error {
 	if b.IsShutdown {
 		return broker.ErrUnavailable
 	}
@@ -116,7 +117,7 @@ func (b *BrokerImpl) Close() error {
 	return nil
 }
 
-func (b *BrokerImpl) Publish(ctx context.Context, subject string, msg broker.Message) (int, error) {
+func (b *BrokerNode) Publish(ctx context.Context, subject string, msg broker.Message) (int, error) {
 	if b.IsShutdown {
 		return -1, broker.ErrUnavailable
 	}
@@ -171,7 +172,7 @@ func (b *BrokerImpl) Publish(ctx context.Context, subject string, msg broker.Mes
 	}
 }
 
-func (b *BrokerImpl) Subscribe(ctx context.Context, subject string) (<-chan broker.Message, error) {
+func (b *BrokerNode) Subscribe(ctx context.Context, subject string) (<-chan broker.Message, error) {
 	if b.IsShutdown {
 		return nil, broker.ErrUnavailable
 	}
@@ -192,7 +193,7 @@ func (b *BrokerImpl) Subscribe(ctx context.Context, subject string) (<-chan brok
 	}
 }
 
-func (b *BrokerImpl) Fetch(ctx context.Context, subject string, id int) (broker.Message, error) {
+func (b *BrokerNode) Fetch(ctx context.Context, subject string, id int) (broker.Message, error) {
 	if b.IsShutdown {
 		return broker.Message{}, broker.ErrUnavailable
 	}
@@ -210,7 +211,7 @@ func (b *BrokerImpl) Fetch(ctx context.Context, subject string, id int) (broker.
 		return msg, nil
 	}
 }
-func (b *BrokerImpl) Join(nodeID, raftAddr string) error {
+func (b *BrokerNode) Join(nodeID, raftAddr string) error {
 	log.Printf("received join request for remote node %s, raftAddr %s\n", nodeID, raftAddr)
 	if b.Raft.State() != raft.Leader {
 		return errors.New("node is not leader")
@@ -235,7 +236,7 @@ func (b *BrokerImpl) Join(nodeID, raftAddr string) error {
 	return nil
 }
 
-func (b *BrokerImpl) Leave(nodeID string) error {
+func (b *BrokerNode) Leave(nodeID string) error {
 	log.Printf("received leave request for remote node %s", nodeID)
 	if b.Raft.State() != raft.Leader {
 		return errors.New("node is not leader")
