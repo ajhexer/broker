@@ -3,12 +3,13 @@ package app
 import (
 	"broker/internal/model"
 	"broker/internal/raft/fsm"
-	"broker/internal/raft/repository"
-	"broker/internal/raft/store"
+	"broker/internal/repository"
 	"broker/pkg/broker"
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/hashicorp/raft"
+	"go.opentelemetry.io/otel"
 	"log"
 	"net"
 	"os"
@@ -22,6 +23,7 @@ type BrokerImpl struct {
 	subjects     map[string]model.Subject
 	IsShutdown   bool
 	listenerLock sync.RWMutex
+	brokerLock   sync.Mutex
 }
 
 func NewModule(enableSingle bool, localID string, badgerPath string, BindAddr string, repo repository.SecondaryDB) broker.Broker {
@@ -36,12 +38,13 @@ func NewModule(enableSingle bool, localID string, badgerPath string, BindAddr st
 		subjects:     make(map[string]model.Subject),
 		IsShutdown:   false,
 		listenerLock: sync.RWMutex{},
+		brokerLock:   sync.Mutex{},
 	}
 }
 
 func Open(enableSingle bool, localID string, badgerPath string, BindAddr string, repo repository.SecondaryDB) (*raft.Raft, *fsm.BrokerFSM, error) {
 	log.Println(enableSingle)
-	log.Println("RavelNode: Opening node")
+	log.Println("Broker Node: Opening node")
 
 	config := raft.DefaultConfig()
 	config.LocalID = raft.ServerID(localID)
@@ -50,48 +53,40 @@ func Open(enableSingle bool, localID string, badgerPath string, BindAddr string,
 
 	addr, err := net.ResolveTCPAddr("tcp", BindAddr)
 	if err != nil {
-		log.Fatal("RavelNode: Unable to resolve TCP Bind Address")
+		log.Fatal("Broker Node: Unable to resolve TCP Bind Address")
 		return nil, nil, err
 	}
 	log.Println(addr)
 	transport, err := raft.NewTCPTransport(BindAddr, addr, 5, 2*time.Second, os.Stderr)
 	if err != nil {
 		log.Println(err)
-		log.Fatal("RavelNode: Unable to create NewTCPTransport")
+		log.Fatal("Broker Node: Unable to create NewTCPTransport")
 		return nil, nil, err
 	}
 
 	snapshot, err := raft.NewFileSnapshotStore(badgerPath+"/snapshot", 1, os.Stderr)
 	if err != nil {
-		log.Fatal("RavelNode: Unable to create SnapShot store")
+		log.Fatal("Broker Node: Unable to create SnapShot store")
 		return nil, nil, err
 	}
 
 	var logStore raft.LogStore
 	var stableStore raft.StableStore
 
-	logStore, err = store.NewRavelLogStore(badgerPath + "/logs")
-	if err != nil {
-		log.Fatal("RavelNode: Unable to create Log store")
-		return nil, nil, err
-	}
+	logStore = raft.NewInmemStore()
 
 	f, err := fsm.NewFSM(badgerPath+"/fsm", repo)
 	if err != nil {
-		log.Fatal("RavelNode: Unable to create FSM")
+		log.Fatal("Broker Node: Unable to create FSM")
 		return nil, nil, err
 	}
 
-	stableStore, err = store.NewRavelStableStore(badgerPath + "/stable")
-	if err != nil {
-		log.Fatal("RavelNode: Unable to create Stable store")
-		return nil, nil, err
-	}
+	stableStore = raft.NewInmemStore()
 
 	r, err := raft.NewRaft(config, f, logStore, stableStore, snapshot, transport)
 	if err != nil {
 		log.Println(err)
-		log.Fatal("RavelNode: Unable initialise raft node")
+		log.Fatal("Broker Node: Unable initialise raft node")
 
 		return nil, nil, err
 	}
@@ -129,6 +124,8 @@ func (b *BrokerImpl) Publish(ctx context.Context, subject string, msg broker.Mes
 	case <-ctx.Done():
 		return -1, ctx.Err()
 	default:
+		_, subSpan := otel.Tracer("Server").Start(ctx, "Module.putChannel")
+		msg.Id = b.FSM.IncIndex(subject)
 		b.listenerLock.Lock()
 		for _, listener := range b.subjects[subject].Subscribers {
 			if cap(listener.Channel) != len(listener.Channel) {
@@ -136,7 +133,8 @@ func (b *BrokerImpl) Publish(ctx context.Context, subject string, msg broker.Mes
 			}
 		}
 		b.listenerLock.Unlock()
-		msg.Id = b.FSM.IncIndex(subject)
+		subSpan.End()
+
 		logData := fsm.LogData{
 			Operation: fsm.SAVE,
 			Message:   msg,
@@ -146,14 +144,15 @@ func (b *BrokerImpl) Publish(ctx context.Context, subject string, msg broker.Mes
 		if err != nil {
 			return -1, err
 		}
-
+		_, subSpan = otel.Tracer("Server").Start(ctx, "Module.raftApply")
+		defer subSpan.End()
+		b.brokerLock.Lock()
 		f := b.Raft.Apply(logBytes, time.Second)
-		//saveSpan.End()
-
+		b.brokerLock.Unlock()
 		if msg.Expiration != 0 {
 			go func(msg *broker.Message, subject string) {
 				<-time.After(msg.Expiration)
-				b.listenerLock.Lock()
+				b.brokerLock.Lock()
 				logData := fsm.LogData{
 					Operation: fsm.DELETE,
 					Message:   *msg,
@@ -164,7 +163,7 @@ func (b *BrokerImpl) Publish(ctx context.Context, subject string, msg broker.Mes
 					panic(err)
 				}
 				b.Raft.Apply(logBytes, time.Second)
-				b.listenerLock.Unlock()
+				b.brokerLock.Unlock()
 			}(&msg, subject)
 		}
 
@@ -210,4 +209,58 @@ func (b *BrokerImpl) Fetch(ctx context.Context, subject string, id int) (broker.
 
 		return msg, nil
 	}
+}
+func (b *BrokerImpl) Join(nodeID, raftAddr string) error {
+	log.Printf("received join request for remote node %s, raftAddr %s\n", nodeID, raftAddr)
+	if b.Raft.State() != raft.Leader {
+		return errors.New("node is not leader")
+	}
+	config := b.Raft.GetConfiguration()
+	if err := config.Error(); err != nil {
+		log.Printf("failed to get raft configuration\n")
+		return err
+	}
+	for _, server := range config.Configuration().Servers {
+		if server.ID == raft.ServerID(nodeID) {
+			log.Printf("node %s already joined raft cluster\n", nodeID)
+			return errors.New("node already exists")
+		}
+	}
+
+	f := b.Raft.AddVoter(raft.ServerID(nodeID), raft.ServerAddress(raftAddr), 0, 0)
+	if err := f.Error(); err != nil {
+		return err
+	}
+	log.Printf("node %s at %s joined successfully\n", nodeID, raftAddr)
+	return nil
+}
+
+func (b *BrokerImpl) Leave(nodeID string) error {
+	log.Printf("received leave request for remote node %s", nodeID)
+	if b.Raft.State() != raft.Leader {
+		return errors.New("node is not leader")
+	}
+
+	config := b.Raft.GetConfiguration()
+
+	if err := config.Error(); err != nil {
+		log.Printf("failed to get raft configuration\n")
+		return err
+	}
+
+	for _, server := range config.Configuration().Servers {
+		if server.ID == raft.ServerID(nodeID) {
+			f := b.Raft.RemoveServer(server.ID, 0, 0)
+			if err := f.Error(); err != nil {
+				log.Printf("failed to remove server %s\n", nodeID)
+				return err
+			}
+
+			log.Printf("node %s left successfully\n", nodeID)
+			return nil
+		}
+	}
+
+	log.Printf("node %s not exist in raft group\n", nodeID)
+	return errors.New("Node doesnt exist in the cluster")
 }

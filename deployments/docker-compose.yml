@@ -1,0 +1,18 @@
+version: "3"
+services:
+  postgres:
+    image: postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=concurrent-http-server
+    volumes:
+      - ../db:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+  cassandra:
+    image: cassandra
+    ports:
+      - "9042:9042"
+    volumes:
+      - ../db:/var/lib/cassandra
