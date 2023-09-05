@@ -2,9 +2,8 @@ package fsm
 
 import (
 	"broker/internal/raft/db"
-	"broker/internal/raft/repository"
+	"broker/internal/repository"
 	"broker/pkg/broker"
-	"crypto"
 	"encoding/json"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/hashicorp/raft"
@@ -107,26 +106,41 @@ func (f *BrokerFSM) Restore(r io.ReadCloser) error {
 func (f *BrokerFSM) Save(logData LogData) error {
 	msg := logData.Message
 	subject := logData.Subject
-	hash := crypto.MD5.New()
 	id := strconv.Itoa(msg.Id)
-	key := make([]byte, 0)
-	key = append(key, hash.Sum([]byte(id))...)
-	key = append(key, hash.Sum([]byte(subject))...)
 	msgBytes, err := json.Marshal(logData)
 	if err != nil {
 		return err
 	}
-	err = f.db.Write(key, msgBytes)
-	f.repo.Save(msg, subject)
-	return err
+
+	dbErrChan := make(chan error)
+	repoErrChan := make(chan error)
+
+	go func() {
+		err := f.db.Write([]byte(id+subject), msgBytes)
+		dbErrChan <- err
+	}()
+
+	go func() {
+		err := f.repo.Save(msg, subject)
+		repoErrChan <- err
+	}()
+	dbErr := <-dbErrChan
+	repoErr := <-repoErrChan
+
+	if dbErr != nil {
+		return dbErr
+	}
+
+	if repoErr != nil {
+		log.Fatal(repoErr)
+	}
+
+	return nil
 }
 func (f *BrokerFSM) Delete(subject string, index int) error {
-	hash := crypto.MD5.New()
+
 	id := strconv.Itoa(index)
-	key := make([]byte, 0)
-	key = append(key, hash.Sum([]byte(id))...)
-	key = append(key, hash.Sum([]byte(subject))...)
-	err := f.db.Delete(key)
+	err := f.db.Delete([]byte(id + subject))
 	if err != nil {
 		return err
 	}
@@ -140,6 +154,9 @@ func (f *BrokerFSM) Get(subject string, index int) (broker.Message, error) {
 func (f *BrokerFSM) IncIndex(subject string) int {
 	var index int
 	f.lock.Lock()
+	if _, ok := f.lastIndexes[subject]; !ok {
+		f.lastIndexes[subject] = 0
+	}
 	index = f.lastIndexes[subject]
 	f.lastIndexes[subject]++
 	f.lock.Unlock()
