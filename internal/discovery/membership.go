@@ -87,6 +87,12 @@ func (m *Membership) eventHandler() {
 func (m *Membership) isLocal(member serf.Member) bool {
 	return m.serf.LocalMember().Name == member.Name
 }
+func (m *Membership) Members() []serf.Member {
+	return m.serf.Members()
+}
+func (m *Membership) Leave() error {
+	return m.serf.Leave()
+}
 
 func (m *Membership) handleJoin(member serf.Member) {
 	if err := m.handler.Join(
