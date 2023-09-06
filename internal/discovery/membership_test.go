@@ -36,10 +36,11 @@ func setupMember(t *testing.T, members []*Membership) (
 	[]*Membership, *handler,
 ) {
 	id := len(members)
-	ports := dynaport.Get(1)
+	ports := dynaport.Get(2)
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", ports[0])
+	raftAddr := fmt.Sprintf("%s:%d", "127.0.0.1", ports[1])
 	tags := map[string]string{
-		"rpc_addr": addr,
+		"rpc_addr": raftAddr,
 	}
 	c := Config{
 		NodeName: fmt.Sprintf("%d", id),

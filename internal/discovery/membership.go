@@ -8,9 +8,10 @@ import (
 
 type Membership struct {
 	Config
-	handler Handler
-	serf    *serf.Serf
-	events  chan serf.Event
+	handler             Handler
+	serf                *serf.Serf
+	events              chan serf.Event
+	kubernetesDiscovery *KubernetesDiscovery
 }
 
 type Handler interface {
@@ -50,6 +51,10 @@ func (m *Membership) setupSerf() error {
 	config.Tags = m.Tags
 	config.NodeName = m.Config.NodeName
 	m.serf, err = serf.Create(config)
+	if err != nil {
+		return err
+	}
+	m.StartJoinAddresses, err = m.kubernetesDiscovery.GetIPAddresses()
 	if err != nil {
 		return err
 	}
