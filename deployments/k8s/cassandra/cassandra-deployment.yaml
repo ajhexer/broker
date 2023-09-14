@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    service: cassandra
+  name: cassandra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      service: cassandra
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        service: cassandra
+    spec:
+      containers:
+        - image: cassandra
+          name: cassandra
+          ports:
+            - containerPort: 9042
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1"
+            limits:
+              memory: "2Gi"
+              cpu: "1"
+      restartPolicy: Always
+status: {}

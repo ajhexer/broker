@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    service: broker
+  name: broker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      service: broker
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        service: broker
+    spec:
+      containers:
+        - env:
+            - name: DB_HOST
+              value: db
+            - name: DB_NAME
+              value: broker
+            - name: DB_PASSWORD
+              value: postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              value: postgres
+          image: broker:latest
+          name: broker
+          ports:
+            - containerPort: 8080
+            - containerPort: 8000
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "2"
+            limits:
+              memory: "3Gi"
+              cpu: "3"
+      restartPolicy: Always
+status: {}
