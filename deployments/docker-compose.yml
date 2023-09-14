@@ -1,18 +1,73 @@
-version: "3"
+version: "3.5"
 services:
-  postgres:
-    image: postgres
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=concurrent-http-server
+#  postgres:
+#    image: postgres
+#    environment:
+#      - POSTGRES_USER=postgres
+#      - POSTGRES_PASSWORD=postgres
+#      - POSTGRES_DB=concurrent-http-server
+#    volumes:
+#      - ./db:/var/lib/postgresql/data
+#    ports:
+#      - "5432:5432"
+#
+#  cassandra:
+#    image: cassandra
+#    ports:
+#      - "9042:9042"
+#    volumes:
+#      - ./db:/var/lib/cassandra
+
+
+#  broker:
+#    build:
+#      context: ../
+#      dockerfile: Dockerfile
+#    container_name: broker
+#    restart: always
+#    ports:
+#      - '8080:8080'
+#    depends_on:
+#      - cassandra
+#      - postgres
+
+#  jaeger:
+#    image: jaegertracing/all-in-one:latest
+#    ports:
+#      - "6831:6831/udp"
+#      - "16686:16686"
+#      - "14268:14268"
+
+  prometheus:
+    image: prom/prometheus:v2.24.0
     volumes:
-      - ../db:/var/lib/postgresql/data
+      - ./configs/prometheus/:/etc/prometheus/
+      - ./prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
     ports:
-      - "5432:5432"
-  cassandra:
-    image: cassandra
-    ports:
-      - "9042:9042"
-    volumes:
-      - ../db:/var/lib/cassandra
+      - "9090:9090"
+    restart: always
+#  envoy:
+#    image: envoyproxy/envoy-alpine:v1.16.0
+#    container_name: envoy
+#    volumes:
+#      - ./configs/envoy/envoy.yaml:/etc/envoy/envoy.yaml # Mount your Envoy configuration file
+#    ports:
+#      - "8080:8080" # Expose the HTTP port
+#      - "9901:8080" # Expose the admin interface port
+#    command: [ "envoy", "-c", "/etc/envoy/envoy.yaml" ]
+#
+#  grafana:
+#    image: grafana/grafana:latest
+#    container_name: grafana
+#    ports:
+#      - "3000:3000"
+#    volumes:
+#      - ./grafana_storage:/var/lib/grafana
+#
+
+

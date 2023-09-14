@@ -6,6 +6,7 @@ import (
 	"fmt"
 	_ "github.com/lib/pq"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,19 +20,104 @@ const (
 )
 
 type PostgresDatabase struct {
-	client *sql.DB
+	batchHandler *BatchHandler
+}
+type BatchHandler struct {
+	deleteMessages []string
+	insertMessages []BatchLog
+	client         *sql.DB
+	deleteLock     sync.RWMutex
+	insertLock     sync.RWMutex
+	ticker         *time.Ticker
+}
+type BatchLog struct {
+	msg     broker.Message
+	subject string
+}
+
+func (b *BatchHandler) batchInsert() error {
+	if len(b.insertMessages) != 0 {
+		query := `INSERT INTO messages(id, subject, body, expiration_date) VALUES `
+		b.insertLock.RLock()
+		for _, bl := range b.insertMessages {
+			query += fmt.Sprintf("(%d, '%s', '%s', %v),", bl.msg.Id, bl.subject, bl.msg.Body, int64(bl.msg.Expiration))
+			log.Println(bl.msg.Id)
+		}
+		b.insertLock.RUnlock()
+		query = query[:len(query)-1] + ";"
+		b.insertMessages = b.insertMessages[:0]
+
+		_, err := b.client.Exec(query)
+		if err != nil {
+			fmt.Println(err)
+		}
+		return err
+	}
+	return nil
+}
+func (b *BatchHandler) batchDelete() error {
+	b.deleteLock.RLock()
+	query := `DELETE FROM messages WHERE ` + strings.Join(b.deleteMessages, " or ") + ";"
+	b.deleteLock.RUnlock()
+	b.deleteMessages = b.deleteMessages[:0]
+
+	_, err := b.client.Exec(query)
+	if err != nil {
+		fmt.Println(err)
+	}
+	return err
+}
+func (b *BatchHandler) insert(msg broker.Message, subject string) error {
+
+	b.insertLock.Lock()
+	b.insertMessages = append(b.insertMessages, BatchLog{msg: msg, subject: subject})
+	b.insertLock.Unlock()
+	return nil
+}
+
+func (b *BatchHandler) delete(id int, subject string) error {
+
+	b.deleteLock.Lock()
+	b.deleteMessages = append(b.deleteMessages, fmt.Sprintf("(id,subject)=(%d,'%s')", id, subject))
+	b.deleteLock.Unlock()
+	return nil
+}
+
+func (b *BatchHandler) start() {
+	for range b.ticker.C {
+		go func() {
+			b.insertLock.RLock()
+			if len(b.insertMessages) != 0 {
+				err := b.batchInsert()
+				if err != nil {
+					log.Println(err)
+				}
+			}
+			b.insertLock.RUnlock()
+		}()
+		go func() {
+			b.deleteLock.RLock()
+			if len(b.deleteMessages) != 0 {
+				err := b.batchDelete()
+				if err != nil {
+					log.Println(err)
+				}
+			}
+			b.deleteLock.RUnlock()
+		}()
+	}
+
 }
 
 func (db *PostgresDatabase) Save(msg broker.Message, subject string) error {
-	_, err := db.client.Exec(`INSERT INTO messages(id, subject, body, expiration_date) VALUES ($1, $2, $3, $4)`, msg.Id, subject, msg.Body, msg.Expiration)
-	return err
+	return db.batchHandler.insert(msg, subject)
 }
 
 func (db *PostgresDatabase) FetchMessage(id int, subject string) (broker.Message, error) {
 	var expiration int64
 	var body string
 
-	err := db.client.QueryRow(`SELECT body, expiration_date FROM messages WHERE id=$1 AND subject=$2`, id, subject).Scan(&body, &expiration)
+	err := db.batchHandler.client.QueryRow(`SELECT body, expiration_date FROM messages WHERE id=$1 AND subject=$2`, id, subject).Scan(&body, &expiration)
 
 	if err != nil {
 		return broker.Message{}, err
@@ -43,12 +129,11 @@ func (db *PostgresDatabase) FetchMessage(id int, subject string) (broker.Message
 }
 
 func (db *PostgresDatabase) DeleteMessage(id int, subject string) error {
-	_, err := db.client.Exec(`DELETE FROM messages WHERE id=$1 AND subject=$2`, id, subject)
-	return err
+	return db.batchHandler.delete(id, subject)
 }
 
 func (db *PostgresDatabase) DropAll() error {
-	_, err := db.client.Exec(`TRUNCATE messages`)
+	_, err := db.batchHandler.client.Exec(`TRUNCATE messages`)
 	return err
 }
 
@@ -62,7 +147,7 @@ func (db *PostgresDatabase) createTable() error {
 		primary key(id, subject)
 	);`
 
-	_, err := db.client.Exec(table)
+	_, err := db.batchHandler.client.Exec(table)
 	if err != nil {
 		return err
 	}
@@ -73,7 +158,7 @@ func (db *PostgresDatabase) createTable() error {
 func (db *PostgresDatabase) createIndex() error {
 	command := `CREATE INDEX IF NOT EXISTS idx_id_subject on messages (id,subject)`
 
-	_, err := db.client.Exec(command)
+	_, err := db.batchHandler.client.Exec(command)
 	if err != nil {
 		return err
 	}
@@ -82,7 +167,7 @@ func (db *PostgresDatabase) createIndex() error {
 
 }
 
-func NewPostgres(databaseUrl string) (*PostgresDatabase, error) {
+func NewPostgres() (*PostgresDatabase, error) {
 	var once sync.Once
 	var connectionError error
 	postgresDatabase := new(PostgresDatabase)
@@ -107,7 +192,14 @@ func NewPostgres(databaseUrl string) (*PostgresDatabase, error) {
 		client.SetConnMaxIdleTime(time.Second * 10)
 
 		*postgresDatabase = PostgresDatabase{
-			client: client,
+			batchHandler: &BatchHandler{
+				client:         client,
+				insertMessages: make([]BatchLog, 0),
+				deleteMessages: make([]string, 0),
+				deleteLock:     sync.RWMutex{},
+				insertLock:     sync.RWMutex{},
+				ticker:         time.NewTicker(10 * time.Millisecond),
+			},
 		}
 		err = postgresDatabase.createTable()
 		if err != nil {

@@ -145,15 +145,14 @@ func (b *BrokerNode) Publish(ctx context.Context, subject string, msg broker.Mes
 		if err != nil {
 			return -1, err
 		}
-		_, subSpan = otel.Tracer("Server").Start(ctx, "Module.raftApply")
-		defer subSpan.End()
+		_, applySpan := otel.Tracer("Server").Start(ctx, "Module.raftApply")
+		defer applySpan.End()
 		b.brokerLock.Lock()
 		f := b.Raft.Apply(logBytes, time.Second)
 		b.brokerLock.Unlock()
 		if msg.Expiration != 0 {
 			go func(msg *broker.Message, subject string) {
 				<-time.After(msg.Expiration)
-				b.brokerLock.Lock()
 				logData := fsm.LogData{
 					Operation: fsm.DELETE,
 					Message:   *msg,
@@ -163,8 +162,7 @@ func (b *BrokerNode) Publish(ctx context.Context, subject string, msg broker.Mes
 				if err != nil {
 					panic(err)
 				}
-				b.Raft.Apply(logBytes, time.Second)
-				b.brokerLock.Unlock()
+				b.Raft.Apply(logBytes, time.Millisecond)
 			}(&msg, subject)
 		}
 

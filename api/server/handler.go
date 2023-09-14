@@ -44,8 +44,8 @@ func (s *BrokerServer) Publish(globalContext context.Context, request *proto.Pub
 	publishId, err := s.brokerNode.Publish(globalContext, request.Subject, msg)
 	pubSpan.End()
 
-	publishDuration := time.Since(publishStartTime)
-	metric.MethodDuration.WithLabelValues("publish_duration").Observe(float64(publishDuration))
+	publishDuration := time.Since(publishStartTime).Seconds()
+	metric.MethodDuration.WithLabelValues("publish_duration").Observe(publishDuration)
 
 	if err != nil {
 		metric.MethodCount.WithLabelValues("publish", "failed").Inc()

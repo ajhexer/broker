@@ -22,8 +22,6 @@ func newResource(name string) *resource.Resource {
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
 			semconv.ServiceNameKey.String(name),
-			// semconv.ServiceVersionKey.String("v0.1.0"),
-			// attribute.String("environment", "demo"),
 		),
 	)
 
@@ -39,7 +37,7 @@ func newTraceProvider(exporter trace.SpanExporter) (*trace.TracerProvider, error
 }
 
 func Register() {
-	exp, err := newExporter("http://host.docker.internal:14268/api/traces")
+	exp, err := newExporter("http://localhost:14268/api/traces")
 
 	if err != nil {
 		log.Fatalf("Register exporter: %v", err)
