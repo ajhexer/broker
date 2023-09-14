@@ -31,6 +31,7 @@ spec:
               value: postgres
           image: broker:latest
           name: broker
+          imagePullPolicy: Never
           ports:
             - containerPort: 8080
             - containerPort: 8000
