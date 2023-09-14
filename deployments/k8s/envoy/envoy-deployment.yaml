@@ -14,7 +14,8 @@ spec:
     spec:
       containers:
         - name: envoy
-          image: envoyproxy/envoy-alpine:v1.16.0
+          image: envoy
+          imagePullPolicy: Never
           ports:
             - name: https
               containerPort: 10000
@@ -25,7 +26,3 @@ spec:
             limits:
               memory: "3Gi"
               cpu: "3"
-      volumes:
-        - name: config
-          configMap:
-            name: envoy-conf
