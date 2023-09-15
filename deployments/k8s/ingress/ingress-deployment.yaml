@@ -1,0 +1,16 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: envoy-ingress
+spec:
+  rules:
+    - host: broker
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: envoy-service
+                port:
+                  number: 8080

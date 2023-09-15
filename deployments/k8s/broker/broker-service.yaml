@@ -3,15 +3,17 @@ kind: Service
 metadata:
   creationTimestamp: null
   labels:
-    service: broker-service
+    service: broker
   name: broker
 spec:
   type: NodePort
   ports:
-    - name: grpc
-      port: 8081
-      targetPort: 8081
-    - name: prometheus
+    - name: "8080"
+      nodePort: 32341
+      port: 8080
+      targetPort: 8080
+    - name: "8000"
+      nodePort: 32342
       port: 8000
       targetPort: 8000
   selector:
