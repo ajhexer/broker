@@ -6,11 +6,12 @@ metadata:
     service: broker
   name: broker-service
 spec:
-  type: LoadBalancer
+  type: NodePort
   ports:
-    - protocol: TCP
+    - name: "rpc"
       port: 8081
       targetPort: 8081
+      nodePort: 32341
   selector:
     app: broker
 status:
