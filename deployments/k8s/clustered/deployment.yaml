@@ -21,8 +21,10 @@ spec:
               containerPort: 12000
             - name: serf
               containerPort: 12001
-            - containerPort: 8081
-            - containerPort: 8000
+            - name: rpc
+              containerPort: 8081
+            - name: prometheus
+              containerPort: 8000
           imagePullPolicy: Never
           volumeMounts:
             - name: data
