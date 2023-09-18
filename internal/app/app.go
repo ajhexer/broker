@@ -11,10 +11,14 @@ import (
 	"errors"
 	"github.com/hashicorp/raft"
 	"go.opentelemetry.io/otel"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 	"log"
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,6 +30,7 @@ type BrokerNode struct {
 	listenerLock sync.RWMutex
 	brokerLock   sync.Mutex
 	membership   *discovery.Membership
+	nodeClients  atomic.Value
 }
 
 func NewModule(enableSingle bool, localID string, badgerPath string, BindAddr string, repo repository.SecondaryDB) broker.Broker {
@@ -33,7 +38,7 @@ func NewModule(enableSingle bool, localID string, badgerPath string, BindAddr st
 	if err != nil {
 		panic(err)
 	}
-	return &BrokerNode{
+	node := &BrokerNode{
 		Raft:         raftInstance,
 		FSM:          fsmInstance,
 		subjects:     make(map[string]model.Subject),
@@ -41,6 +46,8 @@ func NewModule(enableSingle bool, localID string, badgerPath string, BindAddr st
 		listenerLock: sync.RWMutex{},
 		brokerLock:   sync.Mutex{},
 	}
+	node.nodeClients.Store(make(map[string]*grpc.ClientConn))
+	return node
 }
 
 func Open(enableSingle bool, localID string, badgerPath string, BindAddr string, repo repository.SecondaryDB) (*raft.Raft, *fsm.BrokerFSM, error) {
@@ -262,4 +269,22 @@ func (b *BrokerNode) Leave(nodeID string) error {
 
 	log.Printf("node %s not exist in raft group\n", nodeID)
 	return errors.New("Node doesnt exist in the cluster")
+}
+
+func (b *BrokerNode) GetLeaderConnection(port string) (*grpc.ClientConn, error) {
+	leaderAddress, leaderId := b.Raft.LeaderWithID()
+	conn, ok := b.nodeClients.Load().(map[string]*grpc.ClientConn)[string(leaderId)]
+	if !ok || conn.GetState() != connectivity.Ready {
+		address, err := net.ResolveTCPAddr("tcp", string(leaderAddress))
+		if err != nil {
+			return nil, err
+		}
+		newConn, err := grpc.Dial(string(address.IP)+":"+port, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		clientMap := b.nodeClients.Load().(map[string]*grpc.ClientConn)
+		clientMap[string(leaderId)] = newConn
+		b.nodeClients.Store(clientMap)
+		conn = newConn
+	}
+	return conn, nil
+
 }
