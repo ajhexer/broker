@@ -54,7 +54,6 @@ func (m *Membership) setupSerf() error {
 	if err != nil {
 		return err
 	}
-	m.StartJoinAddresses, err = m.kubernetesDiscovery.GetIPAddresses()
 	if err != nil {
 		return err
 	}

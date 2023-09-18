@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	PG_HOST     = "localhost"
+	PG_HOST     = "db"
 	PG_PORT     = "5432"
 	PG_USER     = "postgres"
 	PG_PASSWORD = "postgres"

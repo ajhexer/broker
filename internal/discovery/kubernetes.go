@@ -3,90 +3,60 @@ package discovery
 import (
 	"context"
 	"fmt"
-	v1 "k8s.io/api/core/v1"
+	"github.com/prometheus/common/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"log"
-	"strings"
-)
-
-const (
-	defaultK8sDiscoveryNodePortName = "broker"
-	defaultK8sDiscoverySvcType      = "broker"
+	"os"
 )
 
 type KubernetesDiscovery struct {
-	namespace             string
-	matchingServiceLabels map[string]string
-	nodePortName          string
+	namespace     string
+	labelSelector string
+	hostName      string
 }
 
-func NewKubernetesDiscovery(namespace string, serviceLabels map[string]string, raftPortName string) *KubernetesDiscovery {
-	if raftPortName == "" {
-		raftPortName = defaultK8sDiscoveryNodePortName
-	}
-	if serviceLabels == nil || len(serviceLabels) == 0 {
-		serviceLabels = make(map[string]string)
-		serviceLabels["svcType"] = defaultK8sDiscoverySvcType
-	}
+func NewKubernetesDiscovery(namespace string, hostName string) *KubernetesDiscovery {
+
 	return &KubernetesDiscovery{
-		namespace:             namespace,
-		matchingServiceLabels: serviceLabels,
-		nodePortName:          raftPortName,
+		namespace: namespace,
+		hostName:  hostName,
 	}
 }
-func (k *KubernetesDiscovery) GetIPAddresses() ([]string, error) {
+
+func (k *KubernetesDiscovery) GetIPAddresses() ([]string, error, string) {
 	addresses := make([]string, 0)
+	var localAddress string
 	config, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, err
-	}
+
 	clientSet, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, err
+		log.Error(os.Stderr, "Error creating Kubernetes clientSet: %v\n", err)
+		return nil, err, ""
 	}
 
-	services, err := clientSet.CoreV1().Services(k.namespace).List(context.Background(), metav1.ListOptions{
-		LabelSelector: labels.SelectorFromSet(k.matchingServiceLabels).String(),
-		Watch:         false,
+	pods, err := clientSet.CoreV1().Pods(k.namespace).List(context.TODO(), metav1.ListOptions{
+		LabelSelector: k.labelSelector,
 	})
 	if err != nil {
-		log.Println(err)
-		return nil, err
+		log.Error(os.Stderr, "Error listing pods: %v\n", err)
+		return nil, err, ""
 	}
 
-	for _, svc := range services.Items {
-		set := labels.Set(svc.Spec.Selector)
-		listOptions := metav1.ListOptions{
-			LabelSelector: labels.SelectorFromSet(set).String(),
-		}
-		pods, err := clientSet.CoreV1().Pods(svc.Namespace).List(context.Background(), listOptions)
-		if err != nil {
-			log.Println(err)
+	for _, pod := range pods.Items {
+		if pod.Name == k.hostName {
+			localAddress = pod.Status.PodIP
 			continue
 		}
-		for _, pod := range pods.Items {
-			if strings.ToLower(string(pod.Status.Phase)) == "running" {
-				podIp := pod.Status.PodIP
-				var raftPort v1.ContainerPort
-				for _, container := range pod.Spec.Containers {
-					for _, port := range container.Ports {
-						if port.Name == k.nodePortName {
-							raftPort = port
-							break
-						}
-					}
-				}
-				if podIp != "" && raftPort.ContainerPort != 0 {
-					addresses = append(addresses, fmt.Sprintf("%v:%v", podIp, raftPort.ContainerPort))
-				}
+		for _, container := range pod.Spec.Containers {
+			for _, port := range container.Ports {
+				if port.Name == "serf" {
 
+					addresses = append(addresses, fmt.Sprintf("%v:%v", pod.Status.PodIP, port.ContainerPort))
+				}
 			}
 		}
 	}
-
-	return addresses, nil
+	return addresses, nil, localAddress
 
 }

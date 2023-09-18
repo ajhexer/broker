@@ -3,6 +3,7 @@ package server
 import (
 	"broker/api/proto"
 	"broker/internal/app"
+	"broker/internal/discovery"
 	"broker/internal/metric"
 	"broker/internal/repository"
 	"broker/internal/trace"
@@ -11,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"log"
 	"net"
+	"os"
 )
 
 var (
@@ -39,11 +41,32 @@ func Run() {
 	//if err != nil {
 	//	panic(err)
 	//}
+	hostname, found := os.LookupEnv("HOSTNAME")
+	if !found {
+		panic("HOSTNAME environment variable not set.")
+	}
+	kubernetes := discovery.NewKubernetesDiscovery("default", hostname)
+
+	startIPAddresses, err, localIP := kubernetes.GetIPAddresses()
+	if err != nil {
+		panic(err)
+	}
+	enableSingle := len(startIPAddresses) == 0
+
+	brokerNode := app.NewModule(enableSingle, hostname, "./"+hostname, ":12000", mock)
+	_, err = discovery.New(brokerNode, discovery.Config{
+		NodeName: hostname,
+		BindAddr: ":12001",
+		Tags: map[string]string{
+			"rpc_addr": localIP + ":12000",
+		},
+		StartJoinAddresses: startIPAddresses,
+	})
 
 	proto.RegisterBrokerServer(
 		server,
 		&BrokerServer{
-			brokerNode: app.NewWithoutRaft(mock),
+			brokerNode: brokerNode,
 		},
 	)
 
