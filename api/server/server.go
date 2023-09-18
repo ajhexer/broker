@@ -52,13 +52,14 @@ func Run() {
 		panic(err)
 	}
 	enableSingle := len(startIPAddresses) == 0
-
-	brokerNode := app.NewModule(enableSingle, hostname, "./"+hostname, ":12000", mock)
+	raftBind := localIP + ":12000"
+	serfBind := localIP + ":12001"
+	brokerNode := app.NewModule(enableSingle, hostname, "./"+hostname, raftBind, mock)
 	_, err = discovery.New(brokerNode, discovery.Config{
 		NodeName: hostname,
-		BindAddr: ":12001",
+		BindAddr: serfBind,
 		Tags: map[string]string{
-			"rpc_addr": localIP + ":12000",
+			"rpc_addr": raftBind,
 		},
 		StartJoinAddresses: startIPAddresses,
 	})
