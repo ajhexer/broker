@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: broker
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: broker
+  serviceName: "broker-service"
+  template:
+    metadata:
+      labels:
+        app: broker
+    spec:
+      containers:
+        - name: broker-container
+          image: broker:latest
+          ports:
+            - name: raft
+              containerPort: 12000
+            - name: serf
+              containerPort: 12001
+            - containerPort: 8081
+            - containerPort: 8000
+          imagePullPolicy: Never
+          volumeMounts:
+            - name: data
+              mountPath: /app/storage
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

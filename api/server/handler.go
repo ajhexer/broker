@@ -2,14 +2,19 @@ package server
 
 import (
 	"broker/api/proto"
+	"broker/internal/app"
 	"broker/internal/discovery"
 	"broker/internal/metric"
 	"broker/pkg/broker"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hashicorp/raft"
 	"go.opentelemetry.io/otel"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"log"
+	"net"
 	"sync"
 	"time"
 )
@@ -18,6 +23,7 @@ type BrokerServer struct {
 	proto.UnimplementedBrokerServer
 	brokerNode broker.Broker
 	membership *discovery.Membership
+	port       string
 }
 
 func NewBrokerServer(brokerNode broker.Broker, config discovery.Config) (*BrokerServer, error) {
@@ -32,6 +38,10 @@ func NewBrokerServer(brokerNode broker.Broker, config discovery.Config) (*Broker
 }
 
 func (s *BrokerServer) Publish(globalContext context.Context, request *proto.PublishRequest) (*proto.PublishResponse, error) {
+	if s.brokerNode.(*app.BrokerNode).Raft.State() != raft.Leader {
+		leaderAddress, _ := s.brokerNode.(*app.BrokerNode).Raft.LeaderWithID()
+		return s.forwardPublish(globalContext, request, string(leaderAddress))
+	}
 	globalContext, globalSpan := otel.Tracer("Server").Start(globalContext, "publish method")
 	publishStartTime := time.Now()
 
@@ -140,4 +150,29 @@ func (s *BrokerServer) Fetch(ctx context.Context, request *proto.FetchRequest) (
 	metric.MethodCount.WithLabelValues("fetch", "successful").Inc()
 
 	return &proto.MessageResponse{Body: []byte(msg.Body)}, nil
+}
+
+func (s *BrokerServer) forwardPublish(globalContext context.Context, request *proto.PublishRequest, serverAddress string) (*proto.PublishResponse, error) {
+	address, err := net.ResolveTCPAddr("tcp", serverAddress)
+	if err != nil {
+		return nil, err
+	}
+	client, cancel := newClient(string(address.IP) + ":" + s.port)
+	defer cancel()
+	return client.Publish(globalContext, request)
+}
+
+func newClient(address string) (proto.BrokerClient, func()) {
+
+	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		time.Sleep(time.Millisecond)
+		return newClient(address)
+	}
+
+	cancel := func() {
+		conn.Close()
+	}
+
+	return proto.NewBrokerClient(conn), cancel
 }

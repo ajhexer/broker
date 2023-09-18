@@ -68,6 +68,7 @@ func Run() {
 		server,
 		&BrokerServer{
 			brokerNode: brokerNode,
+			port:       "8081",
 		},
 	)
 
