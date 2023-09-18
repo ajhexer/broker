@@ -8,6 +8,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"os"
+	"strings"
 )
 
 type KubernetesDiscovery struct {
@@ -44,19 +45,22 @@ func (k *KubernetesDiscovery) GetIPAddresses() ([]string, error, string) {
 	}
 
 	for _, pod := range pods.Items {
-		if pod.Name == k.hostName {
-			localAddress = pod.Status.PodIP
-			continue
-		}
-		for _, container := range pod.Spec.Containers {
-			for _, port := range container.Ports {
-				if port.Name == "serf" {
+		if strings.ToLower(string(pod.Status.Phase)) == "running" {
+			if pod.Name == k.hostName {
+				localAddress = pod.Status.PodIP
+				continue
+			}
+			for _, container := range pod.Spec.Containers {
+				for _, port := range container.Ports {
+					if port.Name == "serf" {
 
-					addresses = append(addresses, fmt.Sprintf("%v:%v", pod.Status.PodIP, port.ContainerPort))
+						addresses = append(addresses, fmt.Sprintf("%v:%v", pod.Status.PodIP, port.ContainerPort))
+					}
 				}
 			}
 		}
 	}
+
 	return addresses, nil, localAddress
 
 }
