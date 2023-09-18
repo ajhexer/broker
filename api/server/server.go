@@ -54,7 +54,7 @@ func Run() {
 	enableSingle := len(startIPAddresses) == 0
 	raftBind := localIP + ":12000"
 	serfBind := localIP + ":12001"
-	brokerNode := app.NewModule(enableSingle, hostname, "./"+hostname, raftBind, mock)
+	brokerNode := app.NewModule(enableSingle, hostname, "./storage", raftBind, mock)
 	_, err = discovery.New(brokerNode, discovery.Config{
 		NodeName: hostname,
 		BindAddr: serfBind,
