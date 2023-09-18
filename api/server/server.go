@@ -51,7 +51,7 @@ func Run() {
 	if err != nil {
 		panic(err)
 	}
-	enableSingle := len(startIPAddresses) == 0
+	enableSingle := string(hostname[len(hostname)-1]) == "0"
 	raftBind := localIP + ":12000"
 	serfBind := localIP + ":12001"
 	brokerNode := app.NewModule(enableSingle, hostname, "./storage", raftBind, mock)
