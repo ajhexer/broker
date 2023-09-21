@@ -1,0 +1,16 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: broker
+  namespace: default
+  labels:
+    prometheus: main
+spec:
+  namespaceSelector: {}
+  selector:
+    matchLabels:
+      app: broker
+  podMetricsEndpoints:
+    - port: prometheus
+      path: /metrics
