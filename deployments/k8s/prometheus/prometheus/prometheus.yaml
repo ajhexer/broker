@@ -3,7 +3,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: Prometheus
 metadata:
   name: main
-  namespace: monitoring
+  namespace: default
 spec:
   ruleNamespaceSelector: {}
   version: v2.42.0

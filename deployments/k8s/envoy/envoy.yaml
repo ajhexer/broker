@@ -56,11 +56,11 @@ static_resources:
         cluster_name: alva_service
         endpoints:
           - lb_endpoints:
-              - endpoint:
-                  address:
-                    socket_address:
-                      address: broker-service
-                      port_value: 8081
+            - endpoint:
+                address:
+                  socket_address:
+                    address: broker-service.default.svc.cluster.local
+                    port_value: 8081
       circuit_breakers:
         thresholds:
           - priority: DEFAULT
