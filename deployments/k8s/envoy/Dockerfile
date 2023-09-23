@@ -1,4 +1,4 @@
-FROM envoyproxy/envoy-alpine:v1.16.0
+FROM envoyproxy/envoy
 
 # override the existing default envoy.yaml
 COPY envoy.yaml etc/envoy/envoy.yaml
