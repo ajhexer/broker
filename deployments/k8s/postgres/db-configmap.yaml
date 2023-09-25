@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-secret-credentials
+  labels:
+    app: postgresdb
+data:
+  POSTGRES_DB: broker
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres

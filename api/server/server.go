@@ -7,7 +7,6 @@ import (
 	"broker/internal/metric"
 	"broker/internal/repository"
 	"broker/internal/trace"
-	"broker/pkg/broker"
 	"fmt"
 	"google.golang.org/grpc"
 	"log"
@@ -35,7 +34,10 @@ func Run() {
 
 	server := grpc.NewServer()
 
-	mock := repository.NewMock(make(map[string]map[int]broker.Message))
+	postgres, err := repository.NewPostgres()
+	if err != nil {
+		log.Fatalln(err)
+	}
 
 	hostname, found := os.LookupEnv("HOSTNAME")
 	if !found {
@@ -50,7 +52,7 @@ func Run() {
 	enableSingle := string(hostname[len(hostname)-1]) == "0"
 	raftBind := localIP + ":12000"
 	serfBind := localIP + ":12001"
-	brokerNode := app.NewModule(enableSingle, hostname, "./storage", raftBind, mock, Port)
+	brokerNode := app.NewModule(enableSingle, hostname, "./storage", raftBind, postgres, Port)
 	time.Sleep(5 * time.Second)
 
 	brokerServer, err := NewBrokerServer(brokerNode, discovery.Config{
