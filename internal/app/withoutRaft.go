@@ -21,14 +21,7 @@ type BrokerNodeWithoutRaft struct {
 
 func NewWithoutRaft(repo repository.SecondaryDB) broker.Broker {
 
-	return &BrokerNodeWithoutRaft{
-		repo:         repo,
-		subjects:     make(map[string]model.Subject),
-		lastIndexes:  make(map[string]int),
-		IsShutdown:   false,
-		listenerLock: sync.RWMutex{},
-		brokerLock:   sync.Mutex{},
-	}
+	return nil
 }
 
 func (b *BrokerNodeWithoutRaft) Close() error {

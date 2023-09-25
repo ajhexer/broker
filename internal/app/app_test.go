@@ -28,10 +28,10 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	//service1 = NewModule(true, "node1", "./node1", "localhost:12001", repository.NewMock(make(map[string]map[int]broker.Message)))
-	service1 = NewModule(true, "node1", "./node1", "localhost:12001", cassandra)
+	service1 = NewModule(true, "node1", "./node1", "localhost:12001", cassandra, "8081")
 	<-time.After(2 * time.Second)
-	service2 = NewModule(false, "node2", "./node2", "localhost:12002", repository.NewMock(make(map[string]map[int]broker.Message)))
-	service3 = NewModule(false, "node3", "./node3", "localhost:12003", repository.NewMock(make(map[string]map[int]broker.Message)))
+	service2 = NewModule(false, "node2", "./node2", "localhost:12002", repository.NewMock(make(map[string]map[int]broker.Message)), "8081")
+	service3 = NewModule(false, "node3", "./node3", "localhost:12003", repository.NewMock(make(map[string]map[int]broker.Message)), "8081")
 	service1.Join("node2", "localhost:12002")
 	service1.Join("node3", "localhost:12003")
 	<-time.After(10 * time.Second)

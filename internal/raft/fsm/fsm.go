@@ -2,8 +2,6 @@ package fsm
 
 import (
 	"broker/internal/raft/db"
-	"broker/internal/repository"
-	"broker/pkg/broker"
 	"encoding/json"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/hashicorp/raft"
@@ -15,12 +13,11 @@ import (
 
 type BrokerFSM struct {
 	db          *db.BadgerDB
-	repo        repository.SecondaryDB
-	lastIndexes map[string]int
+	lastIndexes map[string]int32
 	lock        sync.Mutex
 }
 
-func NewFSM(path string, repo repository.SecondaryDB) (*BrokerFSM, error) {
+func NewFSM(path string) (*BrokerFSM, error) {
 	var b db.BadgerDB
 	err := b.Init(path)
 	if err != nil {
@@ -32,25 +29,30 @@ func NewFSM(path string, repo repository.SecondaryDB) (*BrokerFSM, error) {
 
 	return &BrokerFSM{
 		db:          &b,
-		repo:        repo,
-		lastIndexes: make(map[string]int),
+		lastIndexes: make(map[string]int32),
 		lock:        sync.Mutex{},
 	}, nil
 }
 
 func (f *BrokerFSM) Apply(l *raft.Log) interface{} {
+	var err error = nil
 	var logData LogData
-	err := json.Unmarshal(l.Data, &logData)
+	err = json.Unmarshal(l.Data, &logData)
 	if err != nil {
 		return err
 	}
 	switch logData.Operation {
-	case SAVE:
-		return f.Save(logData)
-	case DELETE:
-		return f.Delete(logData.Subject, logData.Message.Id)
+	case IncIndex:
+		f.lock.Lock()
+		if lastIndex, ok := f.lastIndexes[logData.Subject]; !ok || lastIndex < logData.NewIndex {
+			f.lastIndexes[logData.Subject] = logData.NewIndex
+
+			err = f.db.Write([]byte(logData.Subject), []byte(strconv.Itoa(int(logData.NewIndex))))
+		}
+		f.lock.Unlock()
 	}
-	return nil
+
+	return err
 }
 
 func (f *BrokerFSM) Snapshot() (raft.FSMSnapshot, error) {
@@ -71,7 +73,6 @@ func (f *BrokerFSM) Restore(r io.ReadCloser) error {
 	if err != nil {
 		return err
 	}
-	err = f.repo.DropAll()
 	if err != nil {
 		return nil
 	}
@@ -89,70 +90,19 @@ func (f *BrokerFSM) Restore(r io.ReadCloser) error {
 			}); err != nil {
 				return err
 			}
-			var logData LogData
-			err := json.Unmarshal(value, &logData)
+			subject := string(item.Key())
+			index, err := strconv.Atoi(string(value))
 			if err != nil {
 				return err
 			}
-			if f.lastIndexes[logData.Subject] < logData.Message.Id {
-				f.lastIndexes[logData.Subject] = logData.Message.Id + 1
-			}
-			f.repo.Save(logData.Message, logData.Subject)
+			f.lastIndexes[subject] = int32(index)
 		}
 		return nil
 	})
 }
 
-func (f *BrokerFSM) Save(logData LogData) error {
-	msg := logData.Message
-	subject := logData.Subject
-	id := strconv.Itoa(msg.Id)
-	msgBytes, err := json.Marshal(logData)
-	if err != nil {
-		return err
-	}
-
-	dbErrChan := make(chan error)
-	repoErrChan := make(chan error)
-
-	go func() {
-		err := f.db.Write([]byte(id+subject), msgBytes)
-		dbErrChan <- err
-	}()
-
-	go func() {
-		err := f.repo.Save(msg, subject)
-		repoErrChan <- err
-	}()
-	dbErr := <-dbErrChan
-	repoErr := <-repoErrChan
-
-	if dbErr != nil {
-		return dbErr
-	}
-
-	if repoErr != nil {
-		log.Fatal(repoErr)
-	}
-
-	return nil
-}
-func (f *BrokerFSM) Delete(subject string, index int) error {
-
-	id := strconv.Itoa(index)
-	err := f.db.Delete([]byte(id + subject))
-	if err != nil {
-		return err
-	}
-	return f.repo.DeleteMessage(index, subject)
-}
-
-func (f *BrokerFSM) Get(subject string, index int) (broker.Message, error) {
-	return f.repo.FetchMessage(index, subject)
-
-}
-func (f *BrokerFSM) IncIndex(subject string) int {
-	var index int
+func (f *BrokerFSM) IncIndex(subject string) int32 {
+	var index int32
 	f.lock.Lock()
 	if _, ok := f.lastIndexes[subject]; !ok {
 		f.lastIndexes[subject] = 0

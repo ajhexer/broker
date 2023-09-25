@@ -13,10 +13,11 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 )
 
 var (
-	Port = 8081
+	Port = "8081"
 )
 
 func Init() {
@@ -27,20 +28,15 @@ func Init() {
 func Run() {
 	Init()
 
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", Port))
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", Port))
 	if err != nil {
 		log.Fatalf("Cant start listener: %v", err)
 	}
 
 	server := grpc.NewServer()
-	//cassandra, err := repository.NewCassandra()
-	//postgres, err := repository.NewPostgres()
-	//cassandra, err := repository.GetCassandra()
+
 	mock := repository.NewMock(make(map[string]map[int]broker.Message))
 
-	//if err != nil {
-	//	panic(err)
-	//}
 	hostname, found := os.LookupEnv("HOSTNAME")
 	if !found {
 		panic("HOSTNAME environment variable not set.")
@@ -54,8 +50,10 @@ func Run() {
 	enableSingle := string(hostname[len(hostname)-1]) == "0"
 	raftBind := localIP + ":12000"
 	serfBind := localIP + ":12001"
-	brokerNode := app.NewModule(enableSingle, hostname, "./storage", raftBind, mock)
-	_, err = discovery.New(brokerNode, discovery.Config{
+	brokerNode := app.NewModule(enableSingle, hostname, "./storage", raftBind, mock, Port)
+	time.Sleep(5 * time.Second)
+
+	brokerServer, err := NewBrokerServer(brokerNode, discovery.Config{
 		NodeName: hostname,
 		BindAddr: serfBind,
 		Tags: map[string]string{
@@ -63,13 +61,13 @@ func Run() {
 		},
 		StartJoinAddresses: startIPAddresses,
 	})
+	if err != nil {
+		log.Fatalln(err)
+	}
 
 	proto.RegisterBrokerServer(
 		server,
-		&BrokerServer{
-			brokerNode: brokerNode,
-			port:       "8081",
-		},
+		brokerServer,
 	)
 
 	log.Printf("Server starting at: %s", listener.Addr())

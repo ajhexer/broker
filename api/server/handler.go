@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"github.com/hashicorp/raft"
 	"go.opentelemetry.io/otel"
-	"google.golang.org/grpc"
 	"log"
 	"sync"
 	"time"
@@ -21,7 +20,6 @@ type BrokerServer struct {
 	proto.UnimplementedBrokerServer
 	brokerNode broker.Broker
 	membership *discovery.Membership
-	port       string
 }
 
 func NewBrokerServer(brokerNode broker.Broker, config discovery.Config) (*BrokerServer, error) {
@@ -36,10 +34,8 @@ func NewBrokerServer(brokerNode broker.Broker, config discovery.Config) (*Broker
 }
 
 func (s *BrokerServer) Publish(globalContext context.Context, request *proto.PublishRequest) (*proto.PublishResponse, error) {
-	if s.brokerNode.(*app.BrokerNode).Raft.State() != raft.Leader {
-		return s.forwardPublish(globalContext, request)
-	}
-	globalContext, globalSpan := otel.Tracer("Server").Start(globalContext, "publish method")
+	log.Println("Received publish message")
+	//globalContext, globalSpan := otel.Tracer("Server").Start(globalContext, "publish method")
 	publishStartTime := time.Now()
 
 	msg := broker.Message{
@@ -47,9 +43,10 @@ func (s *BrokerServer) Publish(globalContext context.Context, request *proto.Pub
 		Expiration: time.Duration(request.ExpirationSeconds) * time.Second,
 	}
 
-	_, pubSpan := otel.Tracer("Server").Start(globalContext, "Module.Publish")
+	//_, pubSpan := otel.Tracer("Server").Start(globalContext, "Module.Publish")
 	publishId, err := s.brokerNode.Publish(globalContext, request.Subject, msg)
-	pubSpan.End()
+	go s.Gossip(globalContext, request)
+	//pubSpan.End()
 
 	publishDuration := time.Since(publishStartTime).Seconds()
 	metric.MethodDuration.WithLabelValues("publish_duration").Observe(publishDuration)
@@ -62,7 +59,9 @@ func (s *BrokerServer) Publish(globalContext context.Context, request *proto.Pub
 
 	metric.MethodCount.WithLabelValues("publish", "successful").Inc()
 
-	globalSpan.End()
+	//globalSpan.End()
+
+	log.Println("published message")
 
 	return &proto.PublishResponse{Id: int32(publishId)}, nil
 }
@@ -149,16 +148,23 @@ func (s *BrokerServer) Fetch(ctx context.Context, request *proto.FetchRequest) (
 	return &proto.MessageResponse{Body: []byte(msg.Body)}, nil
 }
 
-func (s *BrokerServer) forwardPublish(globalContext context.Context, request *proto.PublishRequest) (*proto.PublishResponse, error) {
-	conn, err := s.brokerNode.(*app.BrokerNode).GetLeaderConnection(s.port)
+func (s *BrokerServer) Gossip(_ context.Context, request *proto.PublishRequest) (*proto.GossipResponse, error) {
+	s.brokerNode.PutChannel(broker.Message{Body: string(request.Body)}, request.Subject)
+	return &proto.GossipResponse{
+		Ack: true,
+	}, nil
+}
+
+func (s *BrokerServer) IncIdx(context context.Context, request *proto.IncIdxRequest) (*proto.IncIdxResponse, error) {
+	if s.brokerNode.(*app.BrokerNode).Raft.State() != raft.Leader {
+		return nil, errors.New("node is not leader")
+	}
+	newIndex, err := s.brokerNode.IncIndex(context, request.Subject)
 	if err != nil {
 		return nil, err
 	}
-	client := newClient(conn)
-
-	return client.Publish(globalContext, request)
-}
-
-func newClient(conn *grpc.ClientConn) proto.BrokerClient {
-	return proto.NewBrokerClient(conn)
+	response := &proto.IncIdxResponse{
+		NewIdx: newIndex,
+	}
+	return response, nil
 }

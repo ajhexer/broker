@@ -16,6 +16,10 @@ service Broker {
   // If the provided id is expired or not present,
   // should return InvalidArgument
   rpc Fetch(FetchRequest) returns (MessageResponse);
+
+  rpc Gossip(PublishRequest) returns (GossipResponse);
+
+  rpc IncIdx(IncIdxRequest) returns (IncIdxResponse);
 }
 
 message PublishRequest {
@@ -39,4 +43,16 @@ message MessageResponse {
 message FetchRequest {
   string subject = 1;
   int32 id = 2;
+}
+
+message GossipResponse {
+  bool ack = 1;
+}
+
+message IncIdxRequest {
+  string subject = 1;
+}
+
+message IncIdxResponse {
+  int32 newIdx = 1;
 }

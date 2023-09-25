@@ -1,7 +1,7 @@
 package app
 
 import (
-	"broker/internal/discovery"
+	"broker/api/proto"
 	"broker/internal/model"
 	"broker/internal/raft/fsm"
 	"broker/internal/repository"
@@ -10,47 +10,55 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/hashicorp/raft"
-	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"log"
 	"net"
 	"os"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
 type BrokerNode struct {
-	Raft         *raft.Raft
-	FSM          *fsm.BrokerFSM
-	subjects     map[string]model.Subject
-	IsShutdown   bool
-	listenerLock sync.RWMutex
-	brokerLock   sync.Mutex
-	membership   *discovery.Membership
-	nodeClients  atomic.Value
+	Raft            *raft.Raft
+	FSM             *fsm.BrokerFSM
+	subjects        map[string]model.Subject
+	IsShutdown      bool
+	listenerLock    sync.RWMutex
+	brokerLock      sync.Mutex
+	nodeName        string
+	nodeClients     map[string]*grpc.ClientConn
+	grpcPort        string
+	connectionsLock sync.RWMutex
+	repo            repository.SecondaryDB
 }
 
-func NewModule(enableSingle bool, localID string, badgerPath string, BindAddr string, repo repository.SecondaryDB) broker.Broker {
-	raftInstance, fsmInstance, err := Open(enableSingle, localID, badgerPath, BindAddr, repo)
+func NewModule(enableSingle bool, localID string, badgerPath string, BindAddr string, repo repository.SecondaryDB, grpcPort string) broker.Broker {
+	raftInstance, fsmInstance, err := Open(enableSingle, localID, badgerPath, BindAddr)
 	if err != nil {
 		panic(err)
 	}
 	node := &BrokerNode{
-		Raft:         raftInstance,
-		FSM:          fsmInstance,
-		subjects:     make(map[string]model.Subject),
-		IsShutdown:   false,
-		listenerLock: sync.RWMutex{},
-		brokerLock:   sync.Mutex{},
+		Raft:            raftInstance,
+		FSM:             fsmInstance,
+		subjects:        make(map[string]model.Subject),
+		IsShutdown:      false,
+		listenerLock:    sync.RWMutex{},
+		brokerLock:      sync.Mutex{},
+		nodeClients:     make(map[string]*grpc.ClientConn),
+		grpcPort:        grpcPort,
+		repo:            repo,
+		connectionsLock: sync.RWMutex{},
+		nodeName:        localID,
 	}
-	node.nodeClients.Store(make(map[string]*grpc.ClientConn))
+
+	go node.monitorConnections()
 	return node
 }
 
-func Open(enableSingle bool, localID string, badgerPath string, BindAddr string, repo repository.SecondaryDB) (*raft.Raft, *fsm.BrokerFSM, error) {
+func Open(enableSingle bool, localID string, badgerPath string, BindAddr string) (*raft.Raft, *fsm.BrokerFSM, error) {
 	log.Println(enableSingle)
 	log.Println("Broker Node: Opening node")
 
@@ -83,7 +91,7 @@ func Open(enableSingle bool, localID string, badgerPath string, BindAddr string,
 
 	logStore = raft.NewInmemStore()
 
-	f, err := fsm.NewFSM(badgerPath+"/fsm", repo)
+	f, err := fsm.NewFSM(badgerPath + "/fsm")
 	if err != nil {
 		log.Fatal("Broker Node: Unable to create FSM")
 		return nil, nil, err
@@ -132,48 +140,30 @@ func (b *BrokerNode) Publish(ctx context.Context, subject string, msg broker.Mes
 	case <-ctx.Done():
 		return -1, ctx.Err()
 	default:
-		_, subSpan := otel.Tracer("Server").Start(ctx, "Module.putChannel")
-		msg.Id = b.FSM.IncIndex(subject)
-		b.listenerLock.Lock()
-		for _, listener := range b.subjects[subject].Subscribers {
-			if cap(listener.Channel) != len(listener.Channel) {
-				listener.Channel <- msg
-			}
-		}
-		b.listenerLock.Unlock()
-		subSpan.End()
-
-		logData := fsm.LogData{
-			Operation: fsm.SAVE,
-			Message:   msg,
-			Subject:   subject,
-		}
-		logBytes, err := json.Marshal(logData)
+		log.Println("Broker: Incrementing index")
+		id, err := b.IncIndex(ctx, subject)
 		if err != nil {
 			return -1, err
 		}
-		_, applySpan := otel.Tracer("Server").Start(ctx, "Module.raftApply")
-		defer applySpan.End()
-		b.brokerLock.Lock()
-		f := b.Raft.Apply(logBytes, time.Second)
-		b.brokerLock.Unlock()
+		msg.Id = int(id)
+		//_, subSpan := otel.Tracer("Server").Start(ctx, "Module.putChannel")
+		log.Println("Broker: Putting into channels")
+		b.PutChannel(msg, subject)
+		log.Println("Broker: Start Broadcast")
+		b.Gossip(msg, subject)
+
+		//subSpan.End()
+		log.Println("Broker: Saving into repo")
+		err = b.repo.Save(msg, subject)
 		if msg.Expiration != 0 {
 			go func(msg *broker.Message, subject string) {
 				<-time.After(msg.Expiration)
-				logData := fsm.LogData{
-					Operation: fsm.DELETE,
-					Message:   *msg,
-					Subject:   subject,
-				}
-				logBytes, err := json.Marshal(logData)
-				if err != nil {
-					panic(err)
-				}
-				b.Raft.Apply(logBytes, time.Millisecond)
+				b.repo.DeleteMessage(msg.Id, subject)
 			}(&msg, subject)
 		}
 
-		return msg.Id, f.Error()
+		log.Println("Broker: Published Successfully")
+		return msg.Id, err
 	}
 }
 
@@ -208,7 +198,7 @@ func (b *BrokerNode) Fetch(ctx context.Context, subject string, id int) (broker.
 		return broker.Message{}, broker.ErrInvalidID
 	default:
 
-		msg, err := b.FSM.Get(subject, id)
+		msg, err := b.repo.FetchMessage(id, subject)
 		if err != nil {
 			return broker.Message{}, broker.ErrExpiredID
 		}
@@ -271,20 +261,133 @@ func (b *BrokerNode) Leave(nodeID string) error {
 	return errors.New("Node doesnt exist in the cluster")
 }
 
-func (b *BrokerNode) GetLeaderConnection(port string) (*grpc.ClientConn, error) {
+func (b *BrokerNode) Gossip(msg broker.Message, subject string) error {
+
+	request := &proto.PublishRequest{
+		Subject: subject,
+		Body:    []byte(msg.Body),
+	}
+	b.connectionsLock.Lock()
+	log.Println("Broadcast: locked connections")
+	for id, connection := range b.nodeClients {
+		log.Println("Broadcast: sending to " + id)
+		client := newClient(connection)
+		go client.Gossip(context.Background(), request)
+	}
+	log.Println("Broadcast: Unlocking")
+	b.connectionsLock.Unlock()
+	return nil
+}
+
+func (b *BrokerNode) IncIndex(context context.Context, subject string) (int32, error) {
+	var newIndex int32
+	if b.Raft.State() != raft.Leader {
+		response, err := b.incIndex(context, subject)
+		if err != nil {
+			return -1, err
+		}
+		newIndex = response.NewIdx
+
+	} else {
+		index, err := b.incIndexLeader(subject)
+		if err != nil {
+			return -1, err
+		}
+		newIndex = index
+	}
+
+	return newIndex, nil
+}
+
+func (b *BrokerNode) PutChannel(message broker.Message, subject string) {
+	b.listenerLock.Lock()
+	for _, listener := range b.subjects[subject].Subscribers {
+		if cap(listener.Channel) != len(listener.Channel) {
+			listener.Channel <- message
+		}
+	}
+	b.listenerLock.Unlock()
+}
+
+func (b *BrokerNode) getLeaderConnection() (*grpc.ClientConn, error) {
 	leaderAddress, leaderId := b.Raft.LeaderWithID()
-	conn, ok := b.nodeClients.Load().(map[string]*grpc.ClientConn)[string(leaderId)]
+	b.connectionsLock.Lock()
+	conn, ok := b.nodeClients[string(leaderId)]
+	b.connectionsLock.Unlock()
 	if !ok || conn.GetState() != connectivity.Ready {
-		address, err := net.ResolveTCPAddr("tcp", string(leaderAddress))
+		newConn, err := b.makeNewConnection(leaderAddress)
 		if err != nil {
 			return nil, err
 		}
-		newConn, err := grpc.Dial(string(address.IP)+":"+port, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		clientMap := b.nodeClients.Load().(map[string]*grpc.ClientConn)
-		clientMap[string(leaderId)] = newConn
-		b.nodeClients.Store(clientMap)
+		b.connectionsLock.Lock()
+		b.nodeClients[string(leaderId)] = newConn
+		b.connectionsLock.Unlock()
 		conn = newConn
 	}
 	return conn, nil
 
+}
+
+func (b *BrokerNode) incIndexLeader(subject string) (int32, error) {
+	index := b.FSM.IncIndex(subject)
+	logData := fsm.LogData{
+		Operation: fsm.IncIndex,
+		Subject:   subject,
+		NewIndex:  index,
+	}
+	logBytes, err := json.Marshal(logData)
+	if err != nil {
+		return -1, err
+	}
+	err = b.Raft.Apply(logBytes, time.Second).Error()
+	return index, err
+}
+
+func (b *BrokerNode) incIndex(globalContext context.Context, subject string) (*proto.IncIdxResponse, error) {
+	conn, err := b.getLeaderConnection()
+	if err != nil {
+		return nil, err
+	}
+	client := newClient(conn)
+
+	return client.IncIdx(globalContext, &proto.IncIdxRequest{
+		Subject: subject,
+	})
+}
+
+func newClient(conn *grpc.ClientConn) proto.BrokerClient {
+	return proto.NewBrokerClient(conn)
+}
+
+func (b *BrokerNode) monitorConnections() {
+	for {
+
+		for _, server := range b.Raft.GetConfiguration().Configuration().Servers {
+			if string(server.ID) == b.nodeName {
+				continue
+			}
+			b.connectionsLock.Lock()
+			log.Println("Monitoring: locked connections")
+			if conn, ok := b.nodeClients[string(server.ID)]; !ok || conn.GetState() != connectivity.Ready {
+				newConn, err := b.makeNewConnection(server.Address)
+				if err != nil {
+					log.Println("Monitoring: "+server.Address+" ", err)
+					b.connectionsLock.Unlock()
+					continue
+				}
+				b.nodeClients[string(server.ID)] = newConn
+			}
+			log.Println("Monitoring: unlocked connections")
+			b.connectionsLock.Unlock()
+		}
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func (b *BrokerNode) makeNewConnection(address raft.ServerAddress) (*grpc.ClientConn, error) {
+	addr := strings.Split(string(address), ":")[0]
+	log.Println("Make Connection: " + addr)
+	newConn, err := grpc.Dial(addr+":"+b.grpcPort, grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+	return newConn, err
 }
