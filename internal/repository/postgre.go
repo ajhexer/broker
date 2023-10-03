@@ -56,10 +56,10 @@ func (b *BatchHandler) batchInsert() error {
 	return nil
 }
 func (b *BatchHandler) batchDelete() error {
-	b.deleteLock.RLock()
+	b.deleteLock.Lock()
 	query := `DELETE FROM messages WHERE ` + strings.Join(b.deleteMessages, " or ") + ";"
-	b.deleteLock.RUnlock()
 	b.deleteMessages = b.deleteMessages[:0]
+	b.deleteLock.Unlock()
 
 	_, err := b.client.Exec(query)
 	if err != nil {
@@ -88,20 +88,24 @@ func (b *BatchHandler) start() {
 		go func() {
 			b.insertLock.RLock()
 			if len(b.insertMessages) != 0 {
+				b.insertLock.RUnlock()
 				err := b.batchInsert()
 				if err != nil {
 					log.Println(err)
 				}
+				return
 			}
 			b.insertLock.RUnlock()
 		}()
 		go func() {
 			b.deleteLock.RLock()
 			if len(b.deleteMessages) != 0 {
+				b.deleteLock.RUnlock()
 				err := b.batchDelete()
 				if err != nil {
 					log.Println(err)
 				}
+				return
 			}
 			b.deleteLock.RUnlock()
 		}()
