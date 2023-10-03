@@ -10,7 +10,7 @@ The message broker system is a critical infrastructure component for facilitatin
 It employs cutting-edge technologies and architectural choices to ensure reliability, scalability, and ease of management.
 
 
-<img width="1228" alt="Screenshot 2023-10-03 at 5 20 25 PM" src="https://github.com/ajhexer/broker/assets/72503020/eb22af10-d449-404a-92b7-9c9c00e91976">
+<img width="1228" alt="Screenshot 2023-10-03 at 5 20 25 PM" src="https://github.com/ajhexer/broker/assets/72503020/9bbee4a1-a58d-4a6e-ac70-60d63899011b">
 
 
 ## Key Features
