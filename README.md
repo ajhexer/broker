@@ -1,5 +1,12 @@
 # broker
 
+<p align="center">
+  <a href="https://skillicons.dev">
+    <img src="https://skillicons.dev/icons?i=go,postgres,kubernetes,docker,prometheus,cassandra" />
+  </a>
+</p>
+
+
 The project is a distributed message broker system built using Golang, designed to provide reliable and consistent message delivery within a clustered environment. 
 It incorporates various technologies and architectural components to ensure high availability, scalability, and robustness. 
 
