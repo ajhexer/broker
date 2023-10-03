@@ -33,7 +33,7 @@ type BrokerClient interface {
 	// If the provided id is expired or not present,
 	// should return InvalidArgument
 	Fetch(ctx context.Context, in *FetchRequest, opts ...grpc.CallOption) (*MessageResponse, error)
-	Gossip(ctx context.Context, in *PublishRequest, opts ...grpc.CallOption) (*GossipResponse, error)
+	Broadcast(ctx context.Context, in *PublishRequest, opts ...grpc.CallOption) (*BroadcastResponse, error)
 	IncIdx(ctx context.Context, in *IncIdxRequest, opts ...grpc.CallOption) (*IncIdxResponse, error)
 }
 
@@ -95,9 +95,9 @@ func (c *brokerClient) Fetch(ctx context.Context, in *FetchRequest, opts ...grpc
 	return out, nil
 }
 
-func (c *brokerClient) Gossip(ctx context.Context, in *PublishRequest, opts ...grpc.CallOption) (*GossipResponse, error) {
-	out := new(GossipResponse)
-	err := c.cc.Invoke(ctx, "/broker.Broker/Gossip", in, out, opts...)
+func (c *brokerClient) Broadcast(ctx context.Context, in *PublishRequest, opts ...grpc.CallOption) (*BroadcastResponse, error) {
+	out := new(BroadcastResponse)
+	err := c.cc.Invoke(ctx, "/broker.Broker/Broadcast", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ type BrokerServer interface {
 	// If the provided id is expired or not present,
 	// should return InvalidArgument
 	Fetch(context.Context, *FetchRequest) (*MessageResponse, error)
-	Gossip(context.Context, *PublishRequest) (*GossipResponse, error)
+	Broadcast(context.Context, *PublishRequest) (*BroadcastResponse, error)
 	IncIdx(context.Context, *IncIdxRequest) (*IncIdxResponse, error)
 	mustEmbedUnimplementedBrokerServer()
 }
@@ -146,8 +146,8 @@ func (UnimplementedBrokerServer) Subscribe(*SubscribeRequest, Broker_SubscribeSe
 func (UnimplementedBrokerServer) Fetch(context.Context, *FetchRequest) (*MessageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Fetch not implemented")
 }
-func (UnimplementedBrokerServer) Gossip(context.Context, *PublishRequest) (*GossipResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Gossip not implemented")
+func (UnimplementedBrokerServer) Broadcast(context.Context, *PublishRequest) (*BroadcastResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Broadcast not implemented")
 }
 func (UnimplementedBrokerServer) IncIdx(context.Context, *IncIdxRequest) (*IncIdxResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method IncIdx not implemented")
@@ -222,20 +222,20 @@ func _Broker_Fetch_Handler(srv interface{}, ctx context.Context, dec func(interf
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Broker_Gossip_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Broker_Broadcast_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PublishRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(BrokerServer).Gossip(ctx, in)
+		return srv.(BrokerServer).Broadcast(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/broker.Broker/Gossip",
+		FullMethod: "/broker.Broker/Broadcast",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BrokerServer).Gossip(ctx, req.(*PublishRequest))
+		return srv.(BrokerServer).Broadcast(ctx, req.(*PublishRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -274,8 +274,8 @@ var Broker_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Broker_Fetch_Handler,
 		},
 		{
-			MethodName: "Gossip",
-			Handler:    _Broker_Gossip_Handler,
+			MethodName: "Broadcast",
+			Handler:    _Broker_Broadcast_Handler,
 		},
 		{
 			MethodName: "IncIdx",

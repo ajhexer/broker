@@ -25,7 +25,7 @@ type Broker interface {
 
 	Leave(nodeID string) error
 
-	Gossip(msg Message, subject string) error
+	Broadcast(msg Message, subject string) error
 
 	IncIndex(context context.Context, subject string) (int32, error)
 

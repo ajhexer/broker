@@ -35,7 +35,6 @@ func NewBrokerServer(brokerNode broker.Broker, config discovery.Config) (*Broker
 
 func (s *BrokerServer) Publish(globalContext context.Context, request *proto.PublishRequest) (*proto.PublishResponse, error) {
 	log.Println("Received publish message")
-	//globalContext, globalSpan := otel.Tracer("Server").Start(globalContext, "publish method")
 	publishStartTime := time.Now()
 
 	msg := broker.Message{
@@ -43,10 +42,8 @@ func (s *BrokerServer) Publish(globalContext context.Context, request *proto.Pub
 		Expiration: time.Duration(request.ExpirationSeconds) * time.Second,
 	}
 
-	//_, pubSpan := otel.Tracer("Server").Start(globalContext, "Module.Publish")
 	publishId, err := s.brokerNode.Publish(globalContext, request.Subject, msg)
-	go s.Gossip(globalContext, request)
-	//pubSpan.End()
+	go s.Broadcast(globalContext, request)
 
 	publishDuration := time.Since(publishStartTime).Seconds()
 	metric.MethodDuration.WithLabelValues("publish_duration").Observe(publishDuration)
@@ -148,9 +145,9 @@ func (s *BrokerServer) Fetch(ctx context.Context, request *proto.FetchRequest) (
 	return &proto.MessageResponse{Body: []byte(msg.Body)}, nil
 }
 
-func (s *BrokerServer) Gossip(_ context.Context, request *proto.PublishRequest) (*proto.GossipResponse, error) {
+func (s *BrokerServer) Broadcast(_ context.Context, request *proto.PublishRequest) (*proto.BroadcastResponse, error) {
 	s.brokerNode.PutChannel(broker.Message{Body: string(request.Body)}, request.Subject)
-	return &proto.GossipResponse{
+	return &proto.BroadcastResponse{
 		Ack: true,
 	}, nil
 }

@@ -150,7 +150,7 @@ func (b *BrokerNode) Publish(ctx context.Context, subject string, msg broker.Mes
 		log.Println("Broker: Putting into channels")
 		b.PutChannel(msg, subject)
 		log.Println("Broker: Start Broadcast")
-		b.Gossip(msg, subject)
+		b.Broadcast(msg, subject)
 
 		//subSpan.End()
 		log.Println("Broker: Saving into repo")
@@ -261,7 +261,7 @@ func (b *BrokerNode) Leave(nodeID string) error {
 	return errors.New("Node doesnt exist in the cluster")
 }
 
-func (b *BrokerNode) Gossip(msg broker.Message, subject string) error {
+func (b *BrokerNode) Broadcast(msg broker.Message, subject string) error {
 
 	request := &proto.PublishRequest{
 		Subject: subject,
@@ -272,7 +272,7 @@ func (b *BrokerNode) Gossip(msg broker.Message, subject string) error {
 	for id, connection := range b.nodeClients {
 		log.Println("Broadcast: sending to " + id)
 		client := newClient(connection)
-		go client.Gossip(context.Background(), request)
+		go client.Broadcast(context.Background(), request)
 	}
 	log.Println("Broadcast: Unlocking")
 	b.connectionsLock.Unlock()

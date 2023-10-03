@@ -158,7 +158,7 @@ type BatchDaemon struct {
 	innerMutex     *sync.Mutex
 }
 
-type CassandraDatabase2 struct {
+type CassandraDatabaseWithBatch struct {
 	sync.Mutex
 	client         *gocql.Session
 	deleteMessages []string
@@ -168,7 +168,7 @@ type CassandraDatabase2 struct {
 
 const MAX_BATCH_SIZE = 20
 
-func (db *CassandraDatabase2) NewBatchDaemon() *BatchDaemon {
+func (db *CassandraDatabaseWithBatch) NewBatchDaemon() *BatchDaemon {
 	ans := &BatchDaemon{
 		batch:          db.client.NewBatch(gocql.LoggedBatch),
 		tickerDuration: time.Millisecond * 100,
@@ -179,7 +179,7 @@ func (db *CassandraDatabase2) NewBatchDaemon() *BatchDaemon {
 	return ans
 }
 
-func (db *CassandraDatabase2) AddQuery(stmt string, args ...interface{}) {
+func (db *CassandraDatabaseWithBatch) AddQuery(stmt string, args ...interface{}) {
 	db.Lock()
 	defer db.Unlock()
 
@@ -191,7 +191,7 @@ func (db *CassandraDatabase2) AddQuery(stmt string, args ...interface{}) {
 
 }
 
-func (db *CassandraDatabase2) Execute() {
+func (db *CassandraDatabaseWithBatch) Execute() {
 
 	if db.bd.batch.Size() == 0 {
 		return
@@ -213,7 +213,7 @@ func (db *CassandraDatabase2) Execute() {
 
 }
 
-func (db *CassandraDatabase2) createTable() error {
+func (db *CassandraDatabaseWithBatch) createTable() error {
 	err := db.client.Query(`CREATE TABLE IF NOT EXISTS broker.messages (id int, subject text, body text, expiration_date bigint, PRIMARY KEY (id));`).Exec()
 	if err != nil {
 		log.Println(err)
@@ -253,7 +253,7 @@ func (db *CassandraDatabase2) createTable() error {
 	return nil
 }
 
-func (db *CassandraDatabase2) Save(msg broker.Message, subject string) error {
+func (db *CassandraDatabaseWithBatch) Save(msg broker.Message, subject string) error {
 
 	query := `INSERT INTO broker.messages (id, subject, body, expiration_date) VALUES (?, ?, ?, ?)`
 
@@ -262,7 +262,7 @@ func (db *CassandraDatabase2) Save(msg broker.Message, subject string) error {
 	return nil
 }
 
-func (db *CassandraDatabase2) FetchMessage(id int, subject string) (broker.Message, error) {
+func (db *CassandraDatabaseWithBatch) FetchMessage(id int, subject string) (broker.Message, error) {
 	query := fmt.Sprintf("SELECT body, expiration_date from broker.messages where id=%d and subject=%d;", id, subject)
 
 	rows := db.client.Query(query).Iter()
@@ -295,14 +295,14 @@ func (db *CassandraDatabase2) FetchMessage(id int, subject string) (broker.Messa
 	return msg, nil
 }
 
-func (db *CassandraDatabase2) DeleteMessage(id int, subject string) error {
+func (db *CassandraDatabaseWithBatch) DeleteMessage(id int, subject string) error {
 
 	query := `DELETE FROM broker.messages WHERE id=? AND subject=?`
 	db.AddQuery(query, id, subject)
 	return nil
 }
 
-func (db *CassandraDatabase2) batchHandler(ticker *time.Ticker) {
+func (db *CassandraDatabaseWithBatch) batchHandler(ticker *time.Ticker) {
 
 	for range ticker.C {
 		db.Lock()
@@ -314,7 +314,7 @@ func (db *CassandraDatabase2) batchHandler(ticker *time.Ticker) {
 func GetCassandra() (SecondaryDB, error) {
 	var once sync.Once
 	var connectionError error
-	cassandraDB := new(CassandraDatabase2)
+	cassandraDB := new(CassandraDatabaseWithBatch)
 
 	once.Do(func() {
 		cluster := gocql.NewCluster(CASS_HOST)
@@ -335,7 +335,7 @@ func GetCassandra() (SecondaryDB, error) {
 			log.Fatal(err)
 		}
 
-		cassandraDB = &CassandraDatabase2{
+		cassandraDB = &CassandraDatabaseWithBatch{
 			client:         session,
 			deleteMessages: make([]string, 0),
 			semaphore:      make(chan int, 10),
@@ -358,7 +358,7 @@ func GetCassandra() (SecondaryDB, error) {
 	return cassandraDB, connectionError
 }
 
-func (c *CassandraDatabase2) DropAll() error {
+func (c *CassandraDatabaseWithBatch) DropAll() error {
 	//TODO implement me
 	panic("implement me")
 }

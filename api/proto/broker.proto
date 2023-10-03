@@ -17,7 +17,7 @@ service Broker {
   // should return InvalidArgument
   rpc Fetch(FetchRequest) returns (MessageResponse);
 
-  rpc Gossip(PublishRequest) returns (GossipResponse);
+  rpc Broadcast(PublishRequest) returns (BroadcastResponse);
 
   rpc IncIdx(IncIdxRequest) returns (IncIdxResponse);
 }
@@ -45,7 +45,7 @@ message FetchRequest {
   int32 id = 2;
 }
 
-message GossipResponse {
+message BroadcastResponse {
   bool ack = 1;
 }
 
